@@ -1,0 +1,21 @@
+{
+    "name": "summer-hill-budget",
+    "version": "0.0.1",
+    "main": "index.js",
+    "author": "<michael.fulthorp@gmail.com>",
+    "license": "MIT",
+    "private": true,
+    "devDependencies": {
+        "@types/node": "^8.0.28",
+        "@types/webdriverio": "^4.8.4",
+        "typescript": "^2.5.2"
+    },
+    "scripts": {
+        "build": "tsc",
+        "start": "yarn run build && node build/index.js"
+    },
+    "dependencies": {
+        "wdio-chromedriver-service": "^0.1.1",
+        "webdriverio": "^4.8.0"
+    }
+}
