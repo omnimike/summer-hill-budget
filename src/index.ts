@@ -3,34 +3,25 @@ import * as readline from 'readline';
 import * as webdriverio from 'webdriverio';
 import * as stream from 'stream';
 
-let muted = false;
-const mutableStdout = new stream.Writable({
-  write: function(chunk, encoding, callback) {
-    if (!muted) {
-        process.stderr.write(chunk as string, encoding);
+main();
+
+async function main() {
+    const username = await question('Enter you lds.org username: ');
+    const password = await question('Enter you lds.org password: ', true);
+
+    log('\nExtracting data from lds.org');
+    try {
+        const rawExpenses = await loginToLdsOrg(username, password);
+        const expenses = parseExpenses(rawExpenses);
+        console.log(JSON.stringify(expenses, null, 4));
+    } catch {
+        process.exit();
     }
-    callback();
-  }
-});
+}
 
-const rl = readline.createInterface({
-    input: process.stdin,
-    output: mutableStdout,
-    terminal: true
-});
-
-rl.question('Enter your lds.org username: ', username => {
-    process.stderr.write('Enter your lds.org password: ');
-    muted = true;
-    rl.question('', password => {
-        muted = false;
-        rl.close();
-        console.log('\nExtracting data from lds.org');
-        loginToLdsOrg(username, password).then(expenses => {
-            console.log(JSON.stringify(expenses, null, 4));
-        });
-    });
-});
+function log(msg: string) {
+    process.stderr.write(msg + '\n');
+}
 
 async function loginToLdsOrg(username: string, password: string): Promise<Array<RawExpense>> {
     const options = {
@@ -111,7 +102,129 @@ interface BudgetTotal {
     month: string
 }
 
-function expensesForBudget(expenses: Array<RawExpense>): Array<BudgetTotal> {
-    const budgetMap: {[key:string]:BudgetTotal} = {};
+function parseExpenses(rawExpenses: Array<RawExpense>): Array<BudgetTotal> {
+    const expenseMap: {[month: string]: {[category: string]: number}} = {};
+    rawExpenses.forEach((expense: RawExpense) => {
+        const amount = parseAmount(expense.amount);
+        const month = parseDate(expense.date, expense.purpose) || 'no date';
+        const category = parseCategory(expense.category);
 
+        if (!expenseMap[month]) {
+            expenseMap[month] = {};
+        }
+        if (!expenseMap[month][category]) {
+            expenseMap[month][category] = 0;
+        }
+        expenseMap[month][category] += amount;
+    });
+    const expenses: Array<BudgetTotal> = [];
+
+    for (let month in expenseMap) {
+        for (let category in expenseMap[month]) {
+            expenses.push({
+                amount: expenseMap[month][category],
+                category: category,
+                month: month
+            });
+        }
+    }
+    return expenses;
+}
+
+function parseAmount(rawAmount: string): number {
+    return parseFloat(rawAmount.replace(/[^0-9.]/g, ''));
+}
+
+function parseDate(rawDate: string, purpose: string): string|null {
+    let match = /^(\d{4})-(\d{1,2}) .*/.exec(purpose);
+    if (match) {
+        return formatDate(match[1], match[2]);
+    }
+    match = /^(\d{1,2})\/(\d{4}) .*/.exec(purpose);
+    if (match) {
+        return formatDate(match[2], match[1]);
+    }
+
+    const months: {[month: string]: string} = {
+        'Jan': '01',
+        'Feb': '02',
+        'Mar': '03',
+        'Apr': '04',
+        'May': '05',
+        'Jun': '06',
+        'Jul': '07',
+        'Aug': '08',
+        'Sep': '09',
+        'Oct': '10',
+        'Nov': '11',
+        'Dec': '12'
+    };
+    match = /\d{2} ([A-Z][a-z][a-z]) (\d{4})/.exec(rawDate);
+    if (match) {
+        const month = months[match[1]];
+        if (!month) {
+            return null;
+        }
+        return formatDate(match[2], month);
+    }
+    return null;
+}
+
+function formatDate(year: string, month: string): string {
+    return year + '-' + (month.length < 2 ? '0' + month : month);
+}
+
+function parseCategory(rawCategory: string): string {
+    return rawCategory.replace('; Australia GST', '');
+}
+
+function question(prompt: string = '', silent: boolean = false): Promise<string> {
+    return new Promise((resolve, reject) => {
+        if (prompt) {
+            process.stderr.write(prompt);
+        }
+
+        const stdin = process.stdin;
+        stdin.resume();
+        if (stdin.setRawMode) {
+            stdin.setRawMode(true);
+            stdin.resume();
+        }
+        stdin.setEncoding('utf8');
+
+        let response = '';
+        const cb = (ch: string) => {
+            ch = ch + '';
+
+            switch (ch) {
+            case "\n":
+            case "\r":
+            case "\u0004":
+                // They've finished typing their response
+                process.stderr.write('\n');
+                if (stdin.setRawMode) {
+                    stdin.setRawMode(false);
+                }
+                stdin.pause();
+                stdin.removeListener('data', cb);
+                resolve(response);
+                break;
+
+            case "\u0003":
+                // Ctrl-C
+                stdin.removeListener('data', cb);
+                reject(new Error('interrupt'));
+                break;
+
+            default:
+                // More passsword characters
+                if (!silent) {
+                    process.stderr.write(ch);
+                }
+                response += ch;
+                break;
+            }
+        };
+        stdin.on('data', cb);
+    });
 }
